@@ -1,37 +1,71 @@
-const express = require('express');
-const { ApolloServer } = require('apollo-server-express');
-const path = require('path');
+const { User } = require("../models");
+const { AuthenticationError } = require("apollo-server-express");
+const { signToken } = require("../utils/auth");
 
-const { authMiddleware } = require('./utils/auth');
-const { typeDefs, resolvers } = require('./schemas');
-const db = require('./config/connection');
+const resolvers = {
+    Query: {
+        me: async (parent, args, context) => {
+            if (context.user) {
+                const userData = await User.findOne({ _id: context.user._id })
+                    .select("-__v -password")
+                    .populate("savedBooks");
 
-const PORT = process.env.PORT || 3001;
-const app = express();
+                return userData;
+            }
+            throw new AuthenticationError("Not currently logged in!");
+        },
+    },
+    Mutation: {
+        login: async (parent, { email, password }) => {
+            const user = await User.findOne({ email });
 
-const server = new ApolloServer({
-  typeDefs,
-  resolvers,
-  context: authMiddleware,
-});
+            if (!user) {
+                throw new AuthenticationError("Username or password is incorrect");
+            }
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+            const correctPw = await user.isCorrectPassword(password);
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-}
+            if (!correctPw) {
+                throw new AuthenticationError("Username or password is incorrect");
+            }
+            const token = signToken(user);
 
-const startApolloServer = async (typeDefs, resolvers) => {
-  await server.start();
-  server.applyMiddleware({ app });
-  
-  db.once('open', () => {
-    app.listen(PORT, () => {
-      console.log(`API server running on port ${PORT}!`);
-      console.log(`Use GraphQL at http://localhost:${PORT}${server.graphqlPath}`);
-    })
-  })
-  };
-  
-  startApolloServer(typeDefs, resolvers);
+            return { token, user };
+        },
+
+        addUser: async (parent, { username, email, password }) => {
+            const user = await User.create({ username, email, password });
+            const token = signToken(user);
+
+            return { token, user };
+        },
+
+        saveBook: async (parent, { input }, context) => {
+            if (context.user) {
+                const updatedUser = await User.findOneAndUpdate(
+                    { _id: context.user._id },
+                    { $addToSet: { savedBooks: input } },
+                    { new: true }
+                ).populate("savedBooks");
+
+                return updatedUser;
+            }
+            throw new AuthenticationError("You must be logged in!");
+        },
+
+        removeBook: async (parent, { bookId }, context) => {
+            if (context.user) {
+                const updatedUser = await User.findOneAndUpdate(
+                    { _id: context.user._id },
+                    { $pull: { savedBooks: { bookId: bookId } } },
+                    { new: true }
+                ).populate("savedBooks");
+
+                return updatedUser;
+            }
+            throw new AuthenticationError("You must be logged in!");
+        },
+    },
+};
+
+module.exports = resolvers;
