@@ -28,7 +28,7 @@ import {REMOVE_BOOK} from '../utils/mutations'
 
     try {
       await removeBook({
-        variable: {bookId}
+        variables: {bookId}
       });
 
       if (error) {
